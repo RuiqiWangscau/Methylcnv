@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Region-grouped 90/10 holdout and five-fold development CV.
 
-The model architecture and train/validate functions are embedded below.
-"""
 import argparse
 import json
 import logging
