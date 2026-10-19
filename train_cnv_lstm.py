@@ -32,7 +32,7 @@ parser.add_argument('--epochs', type=int, default=100, help='Number of training 
 parser.add_argument('--batch_size', type=int, default=192, help='Batch size')
 parser.add_argument('--dropout', type=float, default=0.5, help='Dropout probability')
 parser.add_argument('--save_root', type=str, default='/public/home/wangruiqi/bam/new/model_output', help='Output directory')
-parser.add_argument('--data_path', type=str, default='/public/home/wangruiqi/bam/new/train_data_SRR20318450_bin100.npz', help='Feature data path')
+parser.add_argument('--data_path', type=str, default='/public/home/wangruiqi/bam/new/train_data_sample.npz', help='Feature data path')
 parser.add_argument('--gpuid', type=int, default=0, help='CUDA GPU ID')
 parser.add_argument('--n_features', type=int, default=10, help='Number of features')
 parser.add_argument('--seq_length', type=int, default=50, help='Sequence length')
