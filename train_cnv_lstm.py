@@ -20,7 +20,6 @@ import time
 import logging
 from collections import OrderedDict
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
