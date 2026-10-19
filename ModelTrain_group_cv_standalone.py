@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """Region-grouped 90/10 holdout and five-fold development CV.
 
-Metrics here describe sequence-center classification, not BED event detection.
-Standalone implementation: no train_cnv_lstm.py import is required.
 The model architecture and train/validate functions are embedded below.
 """
 import argparse
