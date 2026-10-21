@@ -26,7 +26,6 @@ Methylcnv/
     train_sklearn.py                   classical classification models
     six_cnv_tools_combined.sh           Collection of six caller job scripts
     reference_cnvs_human.bed            Reference CNV annotations
-    merged_predictions_all_methods.xlsx Aggregated region-level predictions
 ```
 
 The repository includes the compatible `final_model.pt` pretrained weights. Keep this file beside `predict.py` together with `model.py`, `Depth_Methy_Features.py`, `feature_scaler.pkl`, and `feature_names.npy`. The default prediction command loads these supplied files automatically; users do not need to retrain the model. Use `--model` only when specifying another compatible checkpoint path.
@@ -134,32 +133,9 @@ python predict.py \
     --bam /path/to/sample.sorted.bam \
     --meth /path/to/sample_CpG.bed \
     --reference /path/to/hg38.fa \
-    --region chr1:0-1000000 \
     --output ./sample_predictions
 ```
 
-The region syntax is `chrom:start-end`. For example, `chrX:0-1000000` analyzes the first 1 Mb of chromosome X. Use real numerical coordinates, not placeholder letters. Use a new output directory for each run.
-
-
-Specify parameters explicitly when needed:
-
-```bash
-python predict.py \
-    --bam sample.sorted.bam \
-    --meth sample_CpG.bed \
-    --reference hg38.fa \
-    --region chr1:0-1000000 \
-    --bin_size 100 \
-    --seq_length 100 \
-    --stride 50 \
-    --batch_size 32 \
-    --threads 4 \
-    --output sample_predictions
-```
-
-Optional artifact-path overrides are `--model`, `--scaler`, and `--feature_names`. Prediction currently runs on CPU. The target region must contain at least `seq_length` bins, and stride must satisfy `1 <= stride <= seq_length`.
-
-Select a region appropriate for your analysis. Bin size and sequence length should match the verified training settings of the selected checkpoint. The defaults above are the tested prediction settings, not a determination of optimal training hyperparameters. Changing stride may also affect predictions because overlapping-window probabilities are aggregated.
 
 ### 4. Inspect outputs
 
@@ -304,6 +280,4 @@ Outputs include per-class TP/FP/FN, precision, recall, F1, macro/weighted metric
 This baseline script uses a seeded 80/20 region split, bin-level predictions, and majority voting per region. It is not the same protocol or evaluation unit as the five-fold sequence-center classifier. Explicitly align evaluation regions and splits before claiming a matched comparison.
 
 `six_cnv_tools_combined.sh` collects the cn.mops, BreakDancer, CNVkit, CNVnator, DELLY, and Pindel workflows. It contains multiple Slurm headers and site-specific paths. Split out the relevant section and adapt it before job submission; do not submit the collection as a single Slurm job. Required helper scripts and external resources must also be supplied; the collection is not a self-contained six-caller installer.
-
-`merged_predictions_all_methods.xlsx` provides an aggregated region-level comparison table. `reference_cnvs_human.bed` supplies reference annotations. Reproduction of the exact reference set additionally requires the original data release, individual-specific selection criteria, coordinate conversion and merging steps.
 
