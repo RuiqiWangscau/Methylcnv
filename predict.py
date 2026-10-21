@@ -57,7 +57,7 @@ def average_window_probabilities(n, length, starts, batches):
     return total/counts[:, None], counts
 
 
-def main():
+def predict_block_main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bam', type=Path, required=True)
     parser.add_argument('--meth', type=Path, required=True)
@@ -66,6 +66,7 @@ def main():
     parser.add_argument('--scaler', type=Path, default=Path(__file__).parent/'feature_scaler.pkl')
     parser.add_argument('--feature_names', type=Path, default=Path(__file__).parent/'feature_names.npy')
     parser.add_argument('--region', required=True, help='One 0-based half-open region, e.g. chr1:0-1000000')
+    parser.add_argument('--allow_empty_methylation', action='store_true')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--bin_size', type=int, default=100)
     parser.add_argument('--seq_length', type=int, default=100)
@@ -132,7 +133,7 @@ def main():
     processor.meth_data = processor.meth_data.loc[
         processor.meth_data.Chr.eq(chrom) & processor.meth_data.Start.ge(left)
         & processor.meth_data.End.le(right)].copy()
-    if processor.meth_data.empty:
+    if processor.meth_data.empty and not args.allow_empty_methylation:
         raise ValueError('No methylation data in this region; check names, coordinates and sample')
     if processor.fasta:
         processor.fasta = ReferenceAdapter(processor.fasta)
@@ -161,6 +162,10 @@ def main():
             depth.fasta = ReferenceAdapter(depth.fasta)
         d = depth.process_region(chrom)
         m = processor.process_chromosome(chrom)
+        if m is None and processor.meth_data.empty and args.allow_empty_methylation:
+            n = (right - left + args.bin_size - 1) // args.bin_size
+            m = {'meth_density': np.zeros(n), 'meth_variance': np.zeros(n)}
+            logging.warning('No methylation observations in block; density and variance set to zero')
         if d is None or m is None:
             raise ValueError('Feature extraction failed')
         features = pd.DataFrame({name: d[name] if name in d else m[name] for name in names})
@@ -207,5 +212,179 @@ def main():
     print(f'Completed without training: {args.output}')
 
 
+
+
+#!/usr/bin/env python
+"""Run pretrained inference on a region or all shared BAM/FASTA contigs."""
+import argparse
+import json
+import logging
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import pandas as pd
+
+
+def name_map(names):
+    result = {}
+    for name in names:
+        key = canonical(name)
+        if key in result:
+            raise ValueError('Duplicate canonical chromosome: ' + key)
+        result[key] = name
+    return result
+
+
+def plan_blocks(length, chunk_size, bin_size, seq_length, stride):
+    minimum = bin_size * seq_length
+    if length < minimum:
+        return []
+    # Align the left halo with the chromosome-wide sliding-window grid.
+    grid = bin_size * stride
+    halo = minimum
+    blocks = []
+    for left in range(0, length, chunk_size):
+        right = min(left + chunk_size, length)
+        extract_left = max(0, left - halo) // grid * grid
+        extract_right = min(length, right + halo)
+        if extract_right - extract_left < minimum:
+            extract_left = max(0, (extract_right - minimum) // grid * grid)
+        blocks.append((left, right, extract_left, extract_right))
+    return blocks
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ('bam', 'meth', 'reference', 'output'):
+        parser.add_argument('--' + name, type=Path, required=True)
+    here = Path(__file__).resolve().parent
+    for name, filename in [('model', 'final_model.pt'), ('scaler', 'feature_scaler.pkl'),
+                           ('feature_names', 'feature_names.npy')]:
+        parser.add_argument('--' + name, type=Path, default=here / filename)
+    parser.add_argument('--chunk_size', type=int, default=1000000, help='Core block size in bp')
+    parser.add_argument('--bin_size', type=int, default=100)
+    parser.add_argument('--seq_length', type=int, default=100)
+    parser.add_argument('--stride', type=int, default=50)
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--threads', type=int, default=4)
+    parser.add_argument('--temp_dir', type=Path, help='Temporary filesystem with sufficient free space')
+    args = parser.parse_args()
+    if min(args.chunk_size, args.bin_size, args.seq_length, args.stride,
+           args.batch_size, args.threads) < 1 or args.stride > args.seq_length:
+        parser.error('Sizes must be positive and stride must not exceed seq_length')
+    if args.chunk_size % args.bin_size:
+        parser.error('chunk_size must be a multiple of bin_size')
+    if args.chunk_size < args.bin_size * args.seq_length:
+        parser.error('chunk_size must contain at least seq_length bins')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    worker = Path(__file__).resolve()
+    common = []
+    for key in ('bam', 'reference', 'model', 'scaler', 'feature_names',
+                'bin_size', 'seq_length', 'stride', 'batch_size', 'threads'):
+        value = getattr(args, key)
+        common.extend(['--' + key, str(value.resolve() if isinstance(value, Path) else value)])
+    import pysam
+    with pysam.AlignmentFile(str(args.bam), 'rb') as bam, pysam.FastaFile(str(args.reference)) as fasta:
+        if not bam.has_index():
+            raise ValueError('BAM index is required')
+        bm, fm = name_map(bam.references), name_map(fasta.references)
+        chromosomes, skipped = [], []
+        for key, name in bm.items():
+            if key not in fm:
+                skipped.append({'chrom': name, 'reason': 'absent from FASTA'})
+                continue
+            length = bam.get_reference_length(name)
+            if length != fasta.get_reference_length(fm[key]):
+                raise ValueError('BAM/FASTA length mismatch: ' + name)
+            blocks = plan_blocks(length, args.chunk_size, args.bin_size, args.seq_length, args.stride)
+            if not blocks:
+                skipped.append({'chrom': name, 'reason': 'shorter than sequence length'})
+                continue
+            chromosomes.append((key, name, length, blocks))
+    if not chromosomes:
+        raise ValueError('No shared chromosomes long enough for inference')
+    args.output.mkdir(parents=True, exist_ok=False)
+    protocol = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}
+    protocol.update(status='running', skipped_contigs=skipped, blocks=[],
+                    scope='All shared contigs with compatible lengths; no autosome-only filter',
+                    aggregation='Mean window probabilities within halo blocks; retain core bins only',
+                    note='Local features and window edges depend on chunk boundaries. Empty methylation blocks use extractor defaults, not an automatic Normal label.')
+    protocol_path = args.output / 'protocol.json'
+    def save_protocol():
+        protocol_path.write_text(json.dumps(protocol, indent=2), encoding='utf-8')
+    save_protocol()
+    try:
+        with tempfile.TemporaryDirectory(prefix='methylcnv_', dir=args.temp_dir) as temporary:
+            temp = Path(temporary)
+            paths = {key: temp / f'meth_{i}.tsv' for i, (key, _, _, _) in enumerate(chromosomes)}
+            required = ['Chr', 'Start', 'End', 'MethPercent', 'MethCount', 'UnmethCount']
+            for path in paths.values():
+                pd.DataFrame(columns=required).to_csv(path, sep='\t', index=False)
+            # Scan the source once and partition into temporary chromosome tables.
+            for part in pd.read_csv(args.meth, sep='\t', dtype={'Chr': str}, chunksize=200000):
+                if not set(required) <= set(part.columns):
+                    raise ValueError('Methylation BED requires header: ' + ' '.join(required))
+                keys = part.Chr.map(canonical)
+                for key in keys.unique():
+                    if key in paths:
+                        part.loc[keys.eq(key), required].to_csv(paths[key], sep='\t', index=False, header=False, mode='a')
+            first = True
+            total = 0
+            for key, name, length, blocks in chromosomes:
+                for index, (left, right, extract_left, extract_right) in enumerate(blocks):
+                    logging.info('Predicting %s:%d-%d (%d/%d)', name, left, right, index + 1, len(blocks))
+                    meth = temp / 'block_meth.tsv'
+                    pd.DataFrame(columns=required).to_csv(meth, sep='\t', index=False)
+                    n_sites = 0
+                    for part in pd.read_csv(paths[key], sep='\t', dtype={'Chr': str}, chunksize=200000):
+                        selected = part.loc[part.Start.ge(extract_left) & part.End.le(extract_right)]
+                        n_sites += len(selected)
+                        selected.to_csv(meth, sep='\t', index=False, header=False, mode='a')
+                    out = temp / 'block_output'
+                    subprocess.run([sys.executable, str(worker), '--_internal_block', *common, '--meth', str(meth),
+                                    '--region', f'{name}:{extract_left}-{extract_right}',
+                                    '--output', str(out), '--allow_empty_methylation'], check=True)
+                    predictions = pd.read_csv(out / 'bin_predictions.tsv', sep='\t')
+                    mask = predictions.start.ge(left) & predictions.start.lt(right)
+                    selected = predictions.loc[mask].copy()
+                    expected = (right - left + args.bin_size - 1) // args.bin_size
+                    if len(selected) != expected or not selected.start.is_unique:
+                        raise ValueError('Unexpected core bin coverage')
+                    selected.to_csv(args.output / 'bin_predictions.tsv', sep='\t', index=False,
+                                    mode='w' if first else 'a', header=first)
+                    features = pd.read_csv(out / 'extracted_features.tsv', sep='\t').loc[mask.to_numpy()].copy()
+                    features.insert(0, 'end', selected.end.to_numpy())
+                    features.insert(0, 'start', selected.start.to_numpy())
+                    features.insert(0, 'chrom', name)
+                    features.to_csv(args.output / 'extracted_features.tsv', sep='\t', index=False,
+                                    mode='w' if first else 'a', header=first)
+                    first = False
+                    total += len(selected)
+                    protocol['blocks'].append({'chrom': name, 'start': left, 'end': right,
+                                               'context_start': extract_left, 'context_end': extract_right,
+                                               'methylation_sites': n_sites, 'bins': len(selected)})
+                    save_protocol()
+                    for file in out.iterdir():
+                        file.unlink()
+                    out.rmdir()
+            protocol.update(status='completed', bins=total)
+            save_protocol()
+            (args.output / 'SUCCESS').write_text('SUCCESS\n', encoding='ascii')
+    except Exception:
+        protocol['status'] = 'failed'
+        save_protocol()
+        raise
+    logging.info('Completed without training: %s', args.output)
+
+
+
+
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == '--_internal_block':
+        del sys.argv[1]
+        predict_block_main()
+    else:
+        main()
+
