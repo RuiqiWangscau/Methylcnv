@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import argparse
 import json
 import logging
@@ -280,7 +278,7 @@ def reconstruct_regions(frame, bed_path, context=10000, bin_size=100):
     return groups, records
 
 
-def make_windows(frame, groups, labels, length, stride, bin_size):
+def create_sequences(frame, groups, labels, length, stride, bin_size):
     windows, targets, window_groups = [], [], []
     for gid in np.unique(groups):
         indices = np.flatnonzero(groups == gid)
@@ -374,7 +372,7 @@ def main():
         if len(groups) != len(frame):
             raise ValueError('region_id length does not match features')
         regions = []
-    windows, targets, wg = make_windows(frame, groups, labels, args.seq_length, args.stride, args.bin_size)
+    windows, targets, wg = create_sequences(frame, groups, labels, args.seq_length, args.stride, args.bin_size)
     # Fixed first fold of a 10-fold stratified grouped split gives ~10% holdout.
     outer = StratifiedGroupKFold(n_splits=10, shuffle=True, random_state=args.seed)
     development, holdout = next(outer.split(np.zeros(len(targets)), targets, wg))
