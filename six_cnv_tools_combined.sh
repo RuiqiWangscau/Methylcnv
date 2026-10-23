@@ -32,7 +32,7 @@ echo "Output: $OUT"
 echo "Window: $WINDOW bp"
 # 16 allocated CPUs provide the default memory allowance; R processes chromosomes serially.
 Rscript "$CODE" "$BAM" "$OUT" "$WINDOW"
-test -f "$OUT/cn.mops.author.bed"
+test -f "$OUT/cn.mops.bed"
 echo SUCCESS > "$OUT/SUCCESS"
 date
 
@@ -68,7 +68,7 @@ echo "Output directory: $OUT"
 set -x
 breakdancer-max -q 10 sample.cfg > sample.ctx
 python "$NORMALIZER" --format breakdancer \
-    --input sample.ctx --output BreakDancer.q10.bed
+    --input sample.ctx --output BreakDancer.bed
 set +x
 printf 'SUCCESS\n' > SUCCESS
 date
@@ -121,7 +121,7 @@ cp "$OUT/hg38.antitarget.bed" resources/hg38.antitarget.bed
 cnvkit.py call "$ID.cns" -o "$ID.call.cns"
 cnvkit.py export vcf "$ID.call.cns" > "vcf/$ID.cnvkit.vcf"
 python "$BASE/normalize_cnv_calls.py" --format cnvkit \
-    --input "$ID.call.cns" --output CNVkit.generated.bed
+    --input "$ID.call.cns" --output CNVkit.bed
 set +x
 cat > protocol.txt <<EOF
 Analysis: CNVkit WGS mode applied to WGBS, autosomes only.
@@ -253,7 +253,7 @@ if grep -Eq "Can't parse sequence|Can't open|not enough arg" vcf_conversion.log;
 fi
 bcftools view -Ov "vcf/$ID.cnvnator.vcf" -o "$ID.cnvnator.validated.vcf"
 python "$BASE/normalize_cnv_calls.py" --format cnvnator \
-    --input "$ID.cnv" --output CNVnator.author.bed
+    --input "$ID.cnv" --output CNVnator.bed
 set +x
 printf 'Scope=chr1-chr22\nBin_size=100\nBAM=%s\nReference=%s\n' "$BAM" "$REF" > protocol.txt
 printf 'SUCCESS\n' > SUCCESS
@@ -301,7 +301,7 @@ delly sr -x resources/GRCh38.autosomes.generated.excl.tsv \
     -o "$ID.DELLY.bcf" -g "$FASTA" "$BAM"
 bcftools view "$ID.DELLY.bcf" -Ov -o "$ID.DELLY.vcf"
 python "$BASE/normalize_cnv_calls.py" --format vcf \
-    --input "$ID.DELLY.vcf" --output DELLY.author.bed
+    --input "$ID.DELLY.vcf" --output DELLY.bed
 set +x
 printf 'BAM=%s\nReference=%s\nScope=chr1-chr22\nCommand=delly sr -x FASTA_derived_exclusions\n' \
     "$BAM" "$FASTA" > protocol.txt
@@ -369,10 +369,11 @@ cat conversion.log
 # Validate syntax using bcftools. Keep the converter output for provenance.
 bcftools view "$SAMPLE.Pindel.raw.vcf" -Ov -o "$SAMPLE.Pindel.vcf"
 python "$BASE/normalize_cnv_calls.py" --format vcf \
-    --input "$SAMPLE.Pindel.vcf" --output Pindel.author.bed
+    --input "$SAMPLE.Pindel.vcf" --output Pindel.bed
 set +x
 printf 'BAM=%s\nReference=%s\nScope=chr1-chr22\nInsert_size=%s\nThreads=%s\nConverter_date_argument=%s\n' \
     "$BAM" "$FASTA" "$INSERT_SIZE" "$SLURM_CPUS_PER_TASK" "$DATE" > protocol.txt
 echo SUCCESS > SUCCESS
 echo "Results: $OUT"
 date
+
