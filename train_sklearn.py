@@ -15,7 +15,7 @@ from xgboost import XGBClassifier
 from sklearn.metrics import f1_score
 from collections import Counter
 
-NPZ = '/public/home/wangruiqi/bam/cnv_benchmark/train_data_human_bin100_50only.npz'
+NPZ = '/public/home/wangruiqi/bam/cnv_benchmark/train_data_human.npz'
 REGIONS_TSV = '/public/home/wangruiqi/bam/cnv_benchmark/regions.tsv'
 OUT = '/public/home/wangruiqi/bam/cnv_benchmark/sklearn_result'
 os.makedirs(OUT, exist_ok=True)
@@ -117,3 +117,44 @@ with open(os.path.join(OUT, 'test_regions_sklearn.txt'), 'w') as f:
 print("\n[3/3] Summary")
 for name, f1 in summary:
     print(f"  {name:10s} bin-F1={f1:.4f}")
+
+
+
+import subprocess, tempfile
+from pathlib import Path
+import pandas as pd
+
+BASE = Path('/public/home/wangruiqi/bam/cnv_benchmark')
+METHODS = ['AdaBoost', 'DT', 'KNN', 'RF', 'XGBoost']
+df = pd.read_csv(BASE/'comparison_with_coordinates/merged_predictions_all_methods.tsv',
+                 sep='\t', dtype=str, keep_default_na=False)
+ref = pd.read_csv(BASE.parent/'reference_cnvs_human.bed', sep=r'\s+', dtype=str)
+ref = ref[['Chr', 'Start', 'End', 'Type']].copy()
+ref['Type'] = ref.Type.str.upper()
+df['chrom'] = 'chr' + df.chrom.str.replace(r'^chr', '', regex=True)
+ref['Chr'] = 'chr' + ref.Chr.str.replace(r'^chr', '', regex=True)
+results = []
+
+with tempfile.TemporaryDirectory() as tmp:
+    a, b = Path(tmp)/'predictions.bed', Path(tmp)/'reference.bed'
+    ref.assign(id=range(len(ref)))[['Chr', 'Start', 'End', 'id', 'Type']].to_csv(
+        b, sep='\t', index=False, header=False)
+    for method in METHODS:
+        labels = df[method].str.strip()
+        pred = df.loc[labels.isin(['DEL', 'DUP']), ['chrom', 'start', 'end']].copy()
+        pred['id'], pred['type'] = pred.index, labels.loc[pred.index]
+        pred.to_csv(a, sep='\t', index=False, header=False)
+        command = ['bedtools', 'intersect', '-a', str(a), '-b', str(b),
+                   '-f', '0.5', '-wa', '-wb']
+        lines = subprocess.check_output(command, text=True).splitlines() if len(pred) else []
+        matched = {int(f[3]) for f in map(lambda s: s.split('\t'), lines) if f[4] == f[9]}
+        for kind in ['DEL', 'DUP']:
+            ids = set(pred.index[pred.type.eq(kind)])
+            tp, n = len(ids & matched), len(ids)
+            results.append([method, kind, tp, n-tp, 100*tp/n if n else None])
+
+output = BASE/'comparison_with_coordinates/precision_five_ml.tsv'
+pd.DataFrame(results, columns=['method', 'class', 'TP', 'FP', 'precision_percent']).to_csv(
+    output, sep='\t', index=False, na_rep='NA')
+print(output)
+
