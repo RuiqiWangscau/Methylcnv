@@ -79,7 +79,7 @@ Each prediction corresponds to a window center. Window boundaries are not detect
 | `Depth_Methy_Features.py` | Feature calculations used by the training-data builder. |
 | `analyze_results.py` | Classification metrics and plots from saved labeled predictions. |
 | `train_sklearn.py` | Classical-classifier and comparison workflow with dataset-specific settings. |
-| `six_cnv_tools_combined.sh` | Separate CNV-caller job-script examples that require adaptation. |
+| `six_cnv_tools_combined.sh` | Contains workflow scripts for six conventional CNV detection tools: BreakDancer, CNVnator, CNVkit, cn.mops, DELLY, and Pindel. |
 | `reference_cnvs_human.bed` | Reference CNV annotations. |
 | `merged_predictions_all_methods.xlsx` | Aggregated comparison data. |
 
@@ -168,9 +168,7 @@ The input NPZ must contain matching one-dimensional `labels` and `predictions` a
 
 `six_cnv_tools_combined.sh` collects workflow examples for six conventional CNV detection tools: BreakDancer, CNVnator, CNVkit, cn.mops, DELLY, and Pindel. It contains separate job-script sections: extract and adapt the relevant section rather than submitting the concatenated file as one job. Install the external callers and their required helpers separately; they are not installed by `requirements.txt`.
 
-## Reproducibility and support
-
-Preserve the code version, checkpoint, input-file identity, feature-generation settings, reference annotation provenance, data splits and evaluation outputs for each experiment. Model-loading consistency does not establish CNV-event accuracy. Event-based evaluation requires an explicit interval construction and matching rule, including CNV type and the denominator used for overlap.
+## Support
 
 For questions or reproducibility reports, open an [issue](https://github.com/RuiqiWangscau/Methylcnv/issues) and include the command, software environment, and relevant log messages.
 
