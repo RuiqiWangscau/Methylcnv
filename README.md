@@ -11,10 +11,14 @@ Use Python 3 on Linux:
 ```bash
 git clone https://github.com/RuiqiWangscau/Methylcnv.git
 cd Methylcnv
+python3 -m venv methylcnv_env
+source methylcnv_env/bin/activate
 python -m pip install -r requirements.txt
 ```
 
 Use compatible PyTorch and scikit-learn versions when loading the saved checkpoint, preferably the original training environment. Install SAMtools separately if input indexes need to be generated.
+
+Run the commands below from the repository root. Only load trusted checkpoint and feature NPZ files, because these formats may contain serialized Python objects.
 
 ## Predict with the pretrained model
 
@@ -81,7 +85,31 @@ Prediction and training use architecturally identical BiLSTM-attention model def
 
 ## Training and analysis
 
-Pretrained users do not need these steps. To train a model from a compatible labeled feature NPZ:
+Pretrained users do not need these steps.
+
+### Construct labeled training data
+
+The training-data builder uses a BAM, a methylation table, a reference FASTA, and a tab-separated reference CNV table with the following header:
+
+```text
+Chr	Start	End	Type
+```
+
+Use consistent genome assemblies and 0-based, end-exclusive coordinates. `Type` must be `DEL` or `DUP`. Record the reference annotation source and any sample filtering, coordinate conversion, or interval-merging steps used to prepare this table.
+
+`FeatureCollection_pipeline.py` has input paths, output paths, and extraction settings inside `main()`. Edit these for the local dataset before running:
+
+```bash
+python FeatureCollection_pipeline.py
+```
+
+The resulting NPZ contains `features`, `labels`, and `feature_names`. Feature columns include chromosome and bin-start coordinates. An optional row-aligned `region_id` array can be supplied to the training script for explicit grouping. Training-label encoding is `0 = Normal`, `1 = DEL`, and `2 = DUP`.
+
+This labeled-data workflow uses reference CNVs to define training regions; users predicting a new sample should use `predict.py`, which does not require reference labels.
+
+### Train a model
+
+To train a model from a compatible labeled feature NPZ:
 
 ```bash
 python ModelTrain.py \
@@ -92,11 +120,57 @@ python ModelTrain.py \
 
 Training selects feature columns from the input dataset. A model trained with a different feature set is not automatically compatible with the current raw-input predictor. Retain the original data, split manifest, training protocol and results when reproducing an experiment.
 
+The training workflow keeps region groups separate between subsets, fits preprocessing only on the relevant training data, uses validation results for model selection, and performs the final evaluation on a held-out subset. Validation cross-validation scores and independent holdout scores should be reported separately. A held-out region is not necessarily an independent individual.
+
+Training outputs include:
+
+```text
+training_output/
+├── protocol.json
+├── split_manifest.npz
+├── fold_*/
+│   ├── best.pth
+│   ├── val_predictions.npz
+│   └── metrics.json
+├── oof_predictions.npz
+├── final_model.pth
+├── test_predictions.npz
+└── summary.json
+```
+
+The final checkpoint and holdout results are generated after cross-validation and final refitting complete. Keep fold checkpoints separate from the final checkpoint.
+
+### Analyze results without retraining
+
 Analyze a completed training run:
 
 ```bash
 python analyze_results.py --cv_dir /path/to/training_output --output analysis
 ```
+
+Plotting requires matplotlib in addition to requirements.txt. The analysis reports classification metrics; CNV-event overlap evaluation is a separate procedure. Comparison scripts contain local paths and workflow-specific feature selections and splits, which must be reviewed before use.
+
+A single labeled prediction file can also be analyzed without plots:
+
+```bash
+python analyze_results.py \
+  --results /path/to/training_output/test_predictions.npz \
+  --output test_analysis --no_plots
+```
+
+The input NPZ must contain matching one-dimensional `labels` and `predictions` arrays. Outputs include per-class precision, recall and F1, summary metrics, and a confusion matrix. Cross-validation analysis additionally summarizes individual fold results. Unlabeled predictions cannot provide precision or recall without independent reference labels. The analyzer does not directly consume the new-sample prediction TSV.
+
+## Comparison workflows
+
+`train_sklearn.py` contains K-nearest neighbors, Random Forest, XGBoost, Decision Tree, and AdaBoost workflows. Install `xgboost` separately, and edit its dataset, region-table, output and comparison paths before use. It requires a region table containing `region_id`, `chrom`, `start`, and `end`. Verify common held-out data, feature definitions and evaluation units before making matched comparisons; the script's existing selections and split do not automatically match the deep-model training workflow.
+
+`six_cnv_tools_combined.sh` collects examples for BreakDancer, CNVnator, CNVkit, cn.mops, DELLY, and Pindel. It contains separate job-script sections: extract and adapt the relevant section rather than submitting the concatenated file as one job. Install the external callers and their required helpers separately; they are not installed by `requirements.txt`.
+
+## Reproducibility and support
+
+Preserve the code version, checkpoint, input-file identity, feature-generation settings, reference annotation provenance, data splits and evaluation outputs for each experiment. Model-loading consistency does not establish CNV-event accuracy. Event-based evaluation requires an explicit interval construction and matching rule, including CNV type and the denominator used for overlap.
+
+For questions or reproducibility reports, open an [issue](https://github.com/RuiqiWangscau/Methylcnv/issues) and include the command, software environment, and relevant log messages.
 
 Plotting requires matplotlib in addition to requirements.txt. The analysis reports classification metrics; CNV-event overlap evaluation is a separate procedure. Comparison scripts contain local paths and workflow-specific feature selections and splits, which must be reviewed before use.
 
