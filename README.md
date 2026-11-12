@@ -1,283 +1,239 @@
 # MethylCNV
 
-MethylCNV is a deep learning tool for detecting copy number variations (CNVs) from whole-genome bisulfite sequencing (WGBS) data. It uses a bidirectional LSTM (BiLSTM) model with attention mechanisms to integrate multiple genomic features including read depth, GC content, and methylation penalties to identify deletions (DEL) and duplications (DUP) in genomes.
+MethylCNV applies a bidirectional LSTM (BiLSTM) model with attention to genomic features extracted from whole-genome bisulfite sequencing (WGBS) data. The repository provides pretrained prediction from a sample BAM, a CpG methylation table, and the corresponding reference FASTA, together with model-training and result-analysis scripts.
 
-The repository supports:
+**Users can predict with the supplied `final_model.pth` without training a model.** The checkpoint contains the trained weights, feature order, input scaler, and model configuration.
 
-- Prediction with a pretrained feature model, without retraining.
-- Construction of labeled feature datasets from WGBS data.
-- Region-grouped five-fold cross-validation with an independent holdout set.
-- Independent statistical analysis and plotting from saved predictions.
-- Classical classifier comparisons and example CNV caller workflows.
+## Repository files
 
-## Repository structure
-
-```text
-Methylcnv/
-    predict.py                         Pretrained prediction entry point
-    model.py                           feature BiLSTM model definition
-    final_model.pt                     Pretrained feature model weights
-    Depth_Methy_Features.py            Feature extraction module
-    feature_scaler.pkl                 Saved input scaler
-    feature_names.npy                  Ordered pretrained feature names
-    FeatureCollection_pipeline.py      Labeled dataset construction
-    ModelTrain.py                      Standalone region-grouped five-fold training
-    analyze_results.py                 Independent metrics and visualization
-    train_sklearn.py                   classical classification models
-    six_cnv_tools_combined.sh           Collection of six caller job scripts
-    reference_cnvs_human.bed            Reference CNV annotations
-```
-
-The repository includes the compatible `final_model.pt` pretrained weights. Keep this file beside `predict.py` together with `model.py`, `Depth_Methy_Features.py`, `feature_scaler.pkl`, and `feature_names.npy`. The default prediction command loads these supplied files automatically; users do not need to retrain the model. Use `--model` only when specifying another compatible checkpoint path.
-
-
+| File | Purpose |
+| --- | --- |
+| `predict.py` | Self-contained prediction entry point, including the model definition and feature-extraction code. |
+| `final_model.pth` | Pretrained `CNVDetector` weights and associated preprocessing/configuration metadata. |
+| `requirements.txt` | Python dependencies for prediction and model training. |
+| `ModelTrain.py` | Region-grouped five-fold training, final refitting, and independent holdout evaluation. |
+| `Depth_Methy_Features.py` | Feature-extraction module used by the training-data builder. Prediction embeds its feature calculations. |
+| `FeatureCollection_pipeline.py` | Build a labeled training-feature NPZ from WGBS inputs and reference CNVs. |
+| `analyze_results.py` | Analyze saved labeled classification predictions without training. |
+| `train_sklearn.py` | Classical-classifier training and overlap-precision evaluation workflow; edit dataset-specific settings before use. |
+| `six_cnv_tools_combined.sh` | Collection of separate CNV-caller job-script examples. |
+| `reference_cnvs_human.bed` | Reference CNV annotations used for labeled-data construction and comparison. |
+| `merged_predictions_all_methods.xlsx` | Aggregated comparison data. |
 
 ## Installation
 
-### Clone the repository
+Use a Python 3 environment on Linux with compatible PyTorch and scikit-learn versions. Python 2 is not supported. Python 3.10 or later is recommended.
 
 ```bash
 git clone https://github.com/RuiqiWangscau/Methylcnv.git
 cd Methylcnv
+
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-### Create an environment
+The saved scaler records scikit-learn version **1.9.1**. Prefer a matching environment when loading it. `requirements.txt` lists dependencies rather than a validated version lockfile. For CUDA inference, install a PyTorch build compatible with your CUDA environment.
+
+The training and analysis workflows may additionally need plotting packages:
 
 ```bash
-python -m venv methylcnv_env
-source methylcnv_env/bin/activate
+python -m pip install matplotlib
 ```
 
-On Windows:
+Classical classifiers additionally require `xgboost`; reading the supplied XLSX with pandas may require `openpyxl`. External tools such as SAMtools, BEDtools and the six CNV callers must be installed separately for their respective workflows.
 
-```powershell
-methylcnv_env\Scripts\activate
-```
+Load only trusted checkpoints and feature NPZ files: the saved scaler and some NPZ arrays use Python object serialization.
 
-### Install dependencies
+## Predict without training
 
-```bash
-python -m pip install torch numpy pandas pysam scipy \
-    "scikit-learn>=1.1" matplotlib xgboost openpyxl
-```
+### Required sample inputs
 
-Use a compatible modern Python environment. These commands list dependencies; they are not a validated version lockfile. The pretrained scaler was saved with scikit-learn 1.1.1, so using a compatible environment is particularly important. Record the versions used for inference and investigate serialization/version warnings. The prediction script requires PyTorch APIs including `torch.inference_mode()` and `torch.load(..., weights_only=True)`.
+1. A coordinate-sorted BAM and its BAI or CSI index.
+2. A CpG methylation table from the same sample.
+3. The corresponding reference FASTA and its FAI index.
 
-Samtools is useful for preparing BAM and FASTA indexes. BWA-meth and MethylDackel are examples of upstream alignment and methylation-calling tools; these upstream steps are not executed by `predict.py`. The six caller workflows require their own external software installations.
+The BAM and reference must use the same genome assembly. The program accepts chromosome names with or without a `chr` prefix and checks matching chromosome lengths; this does not convert genome assemblies.
 
-Load model weights and pickle artifacts only from trusted sources.
-
-## Quick start: prediction without training
-
-### 1. Prepare user data
-
-Users provide:
-
-| Input | Requirement |
-| --- | --- |
-| WGBS BAM | Coordinate-sorted, indexed alignment file. |
-| BAM index | Matching `.bai` or another index supported by pysam. |
-| CpG methylation table | Same sample as the BAM; tab-separated with the header below. |
-| Reference FASTA | Same assembly and sequences used for alignment. |
-| FASTA index | Matching `.fai`. |
-| Target region | A genomic interval to analyze. |
-
-No training NPZ, reference CNV labels, or retraining is required for prediction.
-
-The methylation table must contain these named columns:
-
-```text
-Chr	Start	End	MethPercent	MethCount	UnmethCount
-```
-
-Use 0-based, half-open coordinates. `MethPercent` is a percentage from 0 to 100. Convert methylation caller output to this format before use; raw bedGraph files may not include the required header or columns. A region with no methylation records causes the script to stop rather than silently produce predictions.
-
-Create indexes if needed:
+If indexes are missing, create them once:
 
 ```bash
 samtools index sample.sorted.bam
 samtools faidx hg38.fa
 ```
 
-Chromosome names with or without `chr` are resolved internally, but assembly differences cannot be corrected by renaming chromosomes. BAM and FASTA chromosome lengths must agree.
-
-### 2. Check pretrained files
-
-Keep these files together:
+The methylation input must be a **tab-separated file with a header** containing these columns:
 
 ```text
-predict.py
-model.py
-Depth_Methy_Features.py
-final_model.pt
-feature_scaler.pkl
-feature_names.npy
+Chr	Start	End	MethPercent	MethCount	UnmethCount
+chr1	100	101	50	5	5
 ```
 
-The ordered prediction features are:
+Coordinates are 0-based and end-exclusive. `MethPercent` is a percentage from 0 to 100; `MethCount` and `UnmethCount` are nonnegative integer counts. A `.bed` extension alone does not establish compatibility: headerless bedGraph or coverage files must first be converted using the appropriate coordinate and column conventions.
+
+### Run prediction
+
+Run from the repository directory:
+
+```bash
+python predict.py \
+  --bam sample.sorted.bam \
+  --meth sample_CpG.bed \
+  --reference hg38.fa \
+  --output sample_predictions
+```
+
+The program automatically loads `final_model.pth` beside `predict.py`, extracts the required features, applies the saved training scaler, and performs inference. It does not train, fit a new scaler, or require reference CNV annotations or true labels.
+
+Use a new output directory for each run. By default, the program processes shared canonical chromosomes 1–22, X, Y and MT in blocks. Chromosomes without methylation observations or fewer than one full model window are skipped and recorded. Terminal incomplete bins are omitted.
+
+To process selected chromosomes:
+
+```bash
+python predict.py \
+  --bam sample.sorted.bam \
+  --meth sample_CpG.bed \
+  --reference hg38.fa \
+  --chromosomes chr1 chr2 \
+  --threads 16 \
+  --output sample_chr1_chr2_predictions
+```
+
+### Prediction options
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--bam` | Required | Coordinate-sorted, indexed BAM. |
+| `--meth` | Required | Headered CpG methylation table. |
+| `--reference` | Required | Indexed reference FASTA. |
+| `--output` | Required | New output directory. |
+| `--checkpoint` | `final_model.pth` beside the script | Compatible checkpoint path. |
+| `--chromosomes` | Shared 1–22, X, Y, MT | Chromosomes to process. |
+| `--bin_size` | `100` | Genomic bin size in bp. |
+| `--stride` | `10` | Spacing between window starts in bins. |
+| `--chunk_bins` | `10000` | Block size for grouping window starts, in bins. |
+| `--batch_size` | `192` | Inference batch size. |
+| `--threads` | `16` | PyTorch CPU thread count. |
+| `--device` | `cpu` | `cpu` or `cuda`. |
+
+Model window length is read from the checkpoint, not set by a prediction option. Bin size and stride are not stored in this checkpoint; retain the original training settings when using it. The current prediction entry point accepts raw WGBS inputs, not a `--data_path` NPZ argument.
+
+### Prediction output
+
+- `window_predictions.tsv`: chromosome, window coordinates, center-bin coordinates, predicted class and three class probabilities.
+- `inference_config.json`: input paths, checkpoint checksum, model configuration, run settings, chromosome status and completion status.
+
+The TSV columns are:
+
+```text
+chrom  window_start  window_end  bin_start  bin_end  prediction  prob_Normal  prob_DEL  prob_DUP
+```
+
+Coordinates are 0-based and end-exclusive. Each window receives one `Normal`, `DEL` or `DUP` classification associated with its center bin. **Window spans are not inferred CNV event boundaries.** The predictor does not merge adjacent calls into CNV events. Classification metrics and CNV-event overlap metrics must therefore be distinguished.
+
+Check that `inference_config.json` reports `status: completed`; failed or interrupted runs can leave partial TSV files. Progress messages are written to standard error. Whole-genome processing can be lengthy; on clusters, submit to a compute node using the local scheduler.
+
+## Pretrained model and training compatibility
+
+Both `ModelTrain.py` and `predict.py` define `Attention`, `FeatureEncoder` and `CNVDetector`. Their model-class definitions were checked for structural equality, and the supplied checkpoint loaded with `strict=True`. They currently retain separate copies of the definitions, so changes must be synchronized.
+
+The supplied checkpoint has:
+
+| Setting | Saved value |
+| --- | --- |
+| Input features | 10, in the order below |
+| Sequence length | 300 bins |
+| Hidden size | 128 per direction |
+| Feature-encoder LSTM layers | 1, bidirectional |
+| Feature fusion | Bidirectional LSTM with feature-level attention |
+| Dropout configuration | 0.5 |
+| Saved final training epoch | 10 |
+| Classes | 0 = Normal; 1 = DEL; 2 = DUP |
+
+Ordered inputs:
 
 ```text
 rd_u
 gc_content
-methyl_penalty_norm
-meth_density
-meth_variance
+methyl_penalty
+depth_gradient
+depth_smooth
+depth_local_std
+depth_change_score
+meth_var_gradient
+meth_var_smooth
+depth_meth_coherence
 ```
 
-The script calculates these features internally, uses the saved scaler with `transform()`, and loads the checkpoint in evaluation mode. It does not fit a new scaler, augment inputs, or update model weights.
+This is a 10-feature model, not the historical five-feature `BiLSTM_CNV` release. In particular, the saved input is `methyl_penalty`, not `methyl_penalty_norm`. Do not substitute historical `final_model.pt`, `feature_scaler.pkl` or feature-name files.
 
-### 3. Run prediction
-
-```bash
-python predict.py \
-    --bam /path/to/sample.sorted.bam \
-    --meth /path/to/sample_CpG.bed \
-    --reference /path/to/hg38.fa \
-    --output ./sample_predictions
-```
-
-
-### 4. Inspect outputs
+Checkpoint SHA-256:
 
 ```text
-sample_predictions/
-    bin_predictions.tsv
-    extracted_features.tsv
-    protocol.json
+03fc081addddc12b5ab5afb6b4b5552c667c6e390ec62d64949aea829a2f42be
 ```
 
-`bin_predictions.tsv` contains:
+Architecture and checkpoint-loading checks establish compatibility; they do not alone reproduce manuscript performance or establish the complete original training history.
 
-```text
-chrom  start  end  prediction_id  prediction  prob_Normal  prob_DEL  prob_DUP  n_windows
-```
+## Optional model training
 
-The implemented class convention is 0=Normal, 1=DEL, and 2=DUP. Check it against the labeled data used for the released checkpoint. Each bin is assigned the class with the highest mean softmax probability across covering windows. A final window covers the region tail. No post-prediction smoothing is applied.
+Training is not required for pretrained prediction.
 
-`extracted_features.tsv` records the numerical features in bin order. `protocol.json` records the input paths and inference parameters.
+### Build labeled training features
 
-The output consists of **bin-level predictions**, not automatically validated or merged CNV events. No accuracy or precision can be calculated for a new unlabeled sample without independent reference annotations.
-
-## Build a labeled training dataset
-
-This workflow is separate from applying the pretrained prediction model. It requires a BAM, methylation table, FASTA, and a reference CNV table with this header:
-
-```text
-Chr	Start	End	Type
-```
-
-`Type` must be DEL or DUP. Coordinates and assemblies must be consistent across inputs.
-
-`FeatureCollection_pipeline.py` calls `Depth_Methy_Features.py` and saves an NPZ containing `features`, `labels`, and `feature_names`. Before running it, edit the paths in its `main()` function:
-
-- Reference FASTA.
-- Sample BAM.
-- Sample methylation table.
-- Reference CNV table.
-- Output directory and NPZ filename in `np.savez()`.
-
-Then run:
+`FeatureCollection_pipeline.py` currently uses paths and settings inside `main()` rather than command-line arguments. Edit its BAM, methylation, reference CNV, FASTA and output paths before running:
 
 ```bash
 python FeatureCollection_pipeline.py
 ```
 
-Dataset options are constructor arguments in `TrainingDataBuilderRegion`, not CLI flags:
+Its current example uses 100-bp bins, 10,000-bp context, `normal_keep_fraction=0.0` and four processes. It writes `features`, `labels` and `feature_names` to an NPZ. The reference-CNV-guided training construction is separate from unlabeled genome-wide prediction.
 
-```python
-builder = TrainingDataBuilderRegion(
-    bin_size=100,
-    context_size=10000,
-    normal_keep_fraction=0.0,
-    n_processes=4,
-)
-```
-
-The default extracts reference-CNV regions with 10 kb flanks and no additional distant-normal intervals. Training bins are initialized as Normal; a bin overlapping a reference CNV by any positive length receives DEL/DUP according to the first overlapping record. This is a training-label rule, not a >50% event-matching rule.
-
-Reference-guided extraction is for labeled dataset construction. It must not be presented as a truth-independent discovery workflow for unknown samples. Match the bin size and context between dataset generation and grouped training. Nonzero distant-region sampling requires compatible explicit region groups because default reconstruction only covers near-CNV intervals.
-
-## Region-grouped five-fold training
-
-`ModelTrain.py` includes the training model and is the standalone five-fold entry point. It does not require a separate `train_cnv_lstm.py`.
-
-Use the exact NPZ generated by the previous step:
+### Train and evaluate
 
 ```bash
 python ModelTrain.py \
-    --data_path /path/to/generated_training_data.npz \
-    --cnv_bed /path/to/reference_cnvs.bed \
-    --save_root ./results/region_cv \
-    --bin_size 100 \
-    --context 10000 \
-    --seq_length 300 \
-    --stride 10 \
-    --epochs 100 \
-    --batch_size 192 \
-    --lr 0.0001 \
-    --patience 10 \
-    --seed 42
+  --data_path /path/to/train_features.npz \
+  --cnv_bed /path/to/reference_cnvs_human.bed \
+  --save_root /path/to/new_training_output \
+  --seq_length 300 --bin_size 100 --stride 10 \
+  --epochs 100 --batch_size 192 --lr 0.0001 --patience 10 --seed 42
 ```
 
-This command trains a new model; it does not load the five-feature prediction checkpoint.
+The NPZ must contain `features`, `feature_names` and `labels`, with coordinate columns `chrom` and `bin_start`. Labels are 0/1/2. An optional row-aligned `region_id` array supplies groups; otherwise the script reconstructs merged extraction regions from the reference CNV table and context.
 
-### Data partitioning and augmentation
+The script uses an approximately 10% stratified grouped holdout, five-fold grouped cross-validation on the remaining development data, and a scaler fitted only on each training subset. It selects the final refit epoch count from the median best fold epoch and refits on development data before evaluating the holdout. `--epochs` is the maximum per-fold count, not a requirement that the final checkpoint use that number of epochs.
 
-1. Merge overlapping reference CNV intervals extended by their context into genomic groups, unless explicit NPZ region IDs are supplied.
-2. Construct continuous windows within each group. The target is the label at window index `seq_length // 2`.
-3. Reserve approximately 10% of windows as an independent holdout using the first fold of a shuffled 10-fold `StratifiedGroupKFold`.
-4. Run five-fold `StratifiedGroupKFold` on the remaining development data. Groups remain intact while class proportions are approximately balanced.
-5. Fit the feature scaler on unique training bins only.
-6. Apply augmentation on the fly only to DEL/DUP training windows: Gaussian noise with mean 0 and standard deviation 0.05, with probability 0.5 after standardization. Validation and holdout data are not augmented.
-7. Select fold checkpoints using validation weighted F1 and early stopping. Refit on all development data for the median selected epoch count, then evaluate the holdout once.
+Training selects all numeric feature columns except coordinate/metadata columns. To train a model usable by the current raw predictor, supply exactly the ten ordered inputs listed above; a checkpoint trained with another feature set is not automatically compatible.
 
-Checks verify that region groups are disjoint across subsets. `protocol.json` records the actual holdout window fraction. Validation-selected CV scores are model-selection results; use the independent holdout for final evaluation. This is region-level partitioning, not necessarily independent-individual or independent-chromosome validation.
+Outputs include fold checkpoints and predictions, `split_manifest.npz`, `protocol.json`, `summary.json`, `oof_predictions.npz`, `test_predictions.npz` and `final_model.pth`. Keep the original feature file and row order together with these records for reproducibility.
 
-### Training outputs
+## Analyze saved results
 
-```text
-results/region_cv/
-    protocol.json
-    split_manifest.npz
-    fold_1/ ... fold_5/
-        best.pth
-        val_predictions.npz
-        metrics.json
-    oof_predictions.npz
-    final_model.pth
-    test_predictions.npz
-    summary.json
+Analyze a completed training run:
+
+```bash
+python analyze_results.py --cv_dir /path/to/training_output --output analysis
 ```
 
-The current training architecture uses per-feature BiLSTM encoders with bin attention, a feature-fusion BiLSTM with feature attention, and a three-class classifier. Input feature count is determined from the dataset after excluding metadata. It differs from the pretrained model in `model.py`.
-
-## Independent analysis and plotting
-
-No retraining is required to analyze saved labeled predictions:
+Or analyze an individual labeled prediction file without plots:
 
 ```bash
 python analyze_results.py \
-    --results ./results/region_cv/test_predictions.npz \
-    --output ./results/region_cv/test_analysis
+  --results /path/to/test_predictions.npz \
+  --output test_analysis --no_plots
 ```
 
-For a completed five-fold experiment:
+The analyzer expects matching `labels` and `predictions` arrays in an NPZ. It computes sequence-label classification metrics, not CNV-event overlap metrics, and does not directly consume the raw predictor's TSV. Cross-validation scores are model-selection results; use the independent holdout for final evaluation.
 
-```bash
-python analyze_results.py \
-    --cv_dir ./results/region_cv \
-    --output ./results/region_cv/analysis
-```
+## Comparison workflows
 
-The analysis input NPZ must contain one-dimensional `labels` and `predictions` arrays with IDs 0/1/2. The script does not directly read the TSV produced by `predict.py`.
+`train_sklearn.py` currently trains five classical classifiers using five input features and a shuffled region-based 80/20 split. It also contains a subsequent BEDtools overlap-precision calculation using external prediction TSVs. Edit the hard-coded paths and provide the required region and comparison tables before running it. Its feature set and split are not identical to the current 10-feature grouped-CV deep model; harmonize them before claiming a matched comparison.
 
-Outputs include per-class TP/FP/FN, precision, recall, F1, macro/weighted metrics, and a confusion matrix. Five-fold analysis additionally reports per-fold metrics and mean/sample standard deviation. Attention plots require saved `feature_attention`; the current five-fold prediction files do not contain it. Training curves require a compatible CSV supplied with `--history`; the current five-fold training script does not export that CSV. Use `--no_plots` for numerical analysis only.
+`six_cnv_tools_combined.sh` collects separate caller job scripts. Extract and adapt the relevant tool section for the local paths, environment and scheduler instead of submitting the concatenated file as one unified workflow. External software and referenced helper scripts must be available.
 
-## Other methods and comparison results
+## Interpretation and reproducibility
 
-`train_sklearn.py` contains KNN, Random Forest, XGBoost, Decision Tree, and AdaBoost. Update its `NPZ`, `REGIONS_TSV`, and `OUT` constants before running. It requires five features named `rd_u`, `gc_content`, `methyl_penalty`, `meth_density`, and `meth_variance`, plus coordinates and labels. The required region table contains `region_id`, `chrom`, `start`, and `end` and is not supplied as a standalone `regions.tsv` in this checkout.
+The pretrained interface applies a fixed model without training. Its successful execution does not by itself validate genome-wide CNV-event accuracy or reproduce published scores. The training workflow uses reference-CNV-guided regions, whereas raw prediction scans predefined genomic bins. Evaluate independent data using a clearly specified prediction unit and event-matching protocol, and retain the source version, checkpoint, feature definitions, training configuration, split manifest and evaluation outputs.
 
-This baseline script uses a seeded 80/20 region split, bin-level predictions, and majority voting per region. It is not the same protocol or evaluation unit as the five-fold sequence-center classifier. Explicitly align evaluation regions and splits before claiming a matched comparison.
-
-`six_cnv_tools_combined.sh` collects the cn.mops, BreakDancer, CNVkit, CNVnator, DELLY, and Pindel workflows. It contains multiple Slurm headers and site-specific paths. Split out the relevant section and adapt it before job submission; do not submit the collection as a single Slurm job. Required helper scripts and external resources must also be supplied; the collection is not a self-contained six-caller installer.
 
