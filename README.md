@@ -1,6 +1,6 @@
 # MethylCNV
 
-MethylCNV is a BiLSTM-based framework with attention for predicting copy number variation from whole-genome bisulfite sequencing (WGBS) data. It extracts genomic and methylation-related features, applies saved preprocessing, and predicts Normal, deletion (DEL), or duplication (DUP) labels.
+MethylCNV is a BiLSTM-based framework with attention for predicting copy number variation from whole-genome bisulfite sequencing (WGBS) data. It extracts genomic and methylation-related features, applies the saved preprocessing settings, and assigns normal, deletion (DEL), or duplication (DUP) labels to genomic windows.
 
 The repository provides a pretrained prediction workflow, training-data construction, model training, result analysis, and comparison workflows. Users can run prediction without training a model.
 
@@ -83,11 +83,11 @@ Each prediction corresponds to a window center. Window boundaries are not detect
 | `reference_cnvs_human.bed` | Reference CNV annotations. |
 | `merged_predictions_all_methods.xlsx` | Aggregated comparison data. |
 
-Prediction and training use architecturally identical BiLSTM-attention model definitions. The supplied checkpoint was checked using strict loading, and the implementations produced identical outputs for identical inputs. These checks establish implementation compatibility, not reproduction of manuscript performance.
+Prediction and training use architecturally identical BiLSTM-attention model definitions. The supplied checkpoint was successfully loaded into both model implementations with strict parameter matching. The implementations also produced identical outputs on the same test inputs. These checks establish implementation compatibility; they do not constitute reproduction of the performance reported in the manuscript.
 
 ## Training and analysis
 
-Pretrained users do not need these steps.
+The following steps are optional and are not required for prediction with the supplied pretrained model.
 
 ### Construct labeled training data
 
@@ -122,7 +122,7 @@ python ModelTrain.py \
 
 Training selects feature columns from the input dataset. A model trained with a different feature set is not automatically compatible with the current raw-input predictor. Retain the original data, split manifest, training protocol and results when reproducing an experiment.
 
-The training workflow keeps region groups separate between subsets, fits preprocessing only on the relevant training data, uses validation results for model selection, and performs the final evaluation on a held-out subset. Validation cross-validation scores and independent holdout scores should be reported separately. A held-out region is not necessarily an independent individual.
+The training workflow keeps region groups separate between subsets, fits preprocessing only on the relevant training data, uses validation results for model selection, and performs the final evaluation on a held-out subset. Cross-validation scores used for model selection and independent holdout scores should be reported separately. A held-out region is not necessarily an independent individual.
 
 Training outputs include:
 
@@ -168,8 +168,9 @@ The input NPZ must contain matching one-dimensional `labels` and `predictions` a
 
 `six_cnv_tools_combined.sh` collects workflow examples for six conventional CNV detection tools: BreakDancer, CNVnator, CNVkit, cn.mops, DELLY, and Pindel. It contains separate job-script sections: extract and adapt the relevant section rather than submitting the concatenated file as one job. Install the external callers and their required helpers separately; they are not installed by `requirements.txt`.
 
-## Support
+## Reproducibility and support
 
+Preserve the code version, checkpoint, input-file identity, feature-generation settings, reference annotation provenance, data splits and evaluation outputs for each experiment. Model-loading consistency does not establish CNV-event accuracy. Event-based evaluation requires an explicit interval construction and matching rule, including CNV type and the denominator used for overlap.
 
 For questions or reproducibility reports, open an [issue](https://github.com/RuiqiWangscau/Methylcnv/issues) and include the command, software environment, and relevant log messages.
 
