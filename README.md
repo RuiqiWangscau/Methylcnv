@@ -4,6 +4,8 @@ MethylCNV is a BiLSTM-based framework with attention for predicting copy number 
 
 The repository provides a pretrained prediction workflow, training-data construction, model training, result analysis, and comparison workflows. Users can run prediction without training a model.
 
+The study compares MethylCNV with six conventional CNV detection tools—BreakDancer, CNVnator, CNVkit, cn.mops, DELLY, and Pindel—and five machine-learning classifiers—K-nearest neighbors (KNN), Random Forest (RF), XGBoost, Decision Tree (DT), and AdaBoost. The repository includes scripts and comparison data supporting these analyses.
+
 ## Installation
 
 Use Python 3 on Linux:
@@ -162,9 +164,9 @@ The input NPZ must contain matching one-dimensional `labels` and `predictions` a
 
 ## Comparison workflows
 
-`train_sklearn.py` contains K-nearest neighbors, Random Forest, XGBoost, Decision Tree, and AdaBoost workflows. Install `xgboost` separately, and edit its dataset, region-table, output and comparison paths before use. It requires a region table containing `region_id`, `chrom`, `start`, and `end`. Verify common held-out data, feature definitions and evaluation units before making matched comparisons; the script's existing selections and split do not automatically match the deep-model training workflow.
+`train_sklearn.py` contains workflows for five machine-learning classifiers: K-nearest neighbors, Random Forest, XGBoost, Decision Tree, and AdaBoost. Install `xgboost` separately, and edit its dataset, region-table, output and comparison paths before use. It requires a region table containing `region_id`, `chrom`, `start`, and `end`. Verify common held-out data, feature definitions and evaluation units before making matched comparisons; the script's existing selections and split do not automatically match the deep-model training workflow.
 
-`six_cnv_tools_combined.sh` collects examples for BreakDancer, CNVnator, CNVkit, cn.mops, DELLY, and Pindel. It contains separate job-script sections: extract and adapt the relevant section rather than submitting the concatenated file as one job. Install the external callers and their required helpers separately; they are not installed by `requirements.txt`.
+`six_cnv_tools_combined.sh` collects workflow examples for six conventional CNV detection tools: BreakDancer, CNVnator, CNVkit, cn.mops, DELLY, and Pindel. It contains separate job-script sections: extract and adapt the relevant section rather than submitting the concatenated file as one job. Install the external callers and their required helpers separately; they are not installed by `requirements.txt`.
 
 ## Reproducibility and support
 
@@ -172,6 +174,5 @@ Preserve the code version, checkpoint, input-file identity, feature-generation s
 
 For questions or reproducibility reports, open an [issue](https://github.com/RuiqiWangscau/Methylcnv/issues) and include the command, software environment, and relevant log messages.
 
-Plotting requires matplotlib in addition to requirements.txt. The analysis reports classification metrics; CNV-event overlap evaluation is a separate procedure. Comparison scripts contain local paths and workflow-specific feature selections and splits, which must be reviewed before use.
 
 
