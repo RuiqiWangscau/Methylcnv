@@ -168,9 +168,8 @@ The input NPZ must contain matching one-dimensional `labels` and `predictions` a
 
 `six_cnv_tools_combined.sh` collects workflow examples for six conventional CNV detection tools: BreakDancer, CNVnator, CNVkit, cn.mops, DELLY, and Pindel. It contains separate job-script sections: extract and adapt the relevant section rather than submitting the concatenated file as one job. Install the external callers and their required helpers separately; they are not installed by `requirements.txt`.
 
-## Reproducibility and support
+## Support
 
-Preserve the code version, checkpoint, input-file identity, feature-generation settings, reference annotation provenance, data splits and evaluation outputs for each experiment. Model-loading consistency does not establish CNV-event accuracy. Event-based evaluation requires an explicit interval construction and matching rule, including CNV type and the denominator used for overlap.
 
 For questions or reproducibility reports, open an [issue](https://github.com/RuiqiWangscau/Methylcnv/issues) and include the command, software environment, and relevant log messages.
 
